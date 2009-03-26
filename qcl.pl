@@ -5,11 +5,32 @@
 # $Date$
 # $Revision$
 #
-# Kaloyan Tenchov, 2009
+# QNX QCONN service provider client.
+#
+# Copyright (c) 2009 Kaloyan Tenchov
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
 #
 # TODO:
 #   - Parse error messages of file service.
 #   - Ability to set permissions of files when using the put command.
+#   - Allow multiple sources of put command and get commands.
 #
 
 use warnings;
@@ -168,7 +189,7 @@ sub get_mode
 
     $cmd = sprintf('o:%s:%x', $spec, O_RDONLY);
     @lines = $q->cmd($cmd);
-    return -1 if ($#lines < 0 || $lines[0] !~ /^o:([0-9a-f]+):([0-9a-f]+):([0-9a-f]+):\"(.+)\"$/oi || $4 ne $spec);
+    return -1 if ($#lines < 0 || $lines[0] !~ /^o:([0-9a-f-]+):([0-9a-f-]+):([0-9a-f-]+):\"(.+)\"$/oi || $4 ne $spec);
     my $f = hex($1);
     my $mode = hex($2);
 
@@ -242,7 +263,7 @@ sub cmd_put
     # Create target file
     $cmd = sprintf("o:\"%s\":%x:%x", $target, O_CREAT|O_TRUNC|O_WRONLY, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH);
     @lines = $q->cmd($cmd);
-    if ($#lines < 0 || $lines[0] !~ /^o:([0-9a-f]+):([0-9a-f]+):([0-9a-f]+):\"(.+)\"$/oi || $4 ne $target)
+    if ($#lines < 0 || $lines[0] !~ /^o:([0-9a-f-]+):([0-9a-f-]+):([0-9a-f-]+):\"(.+)\"$/oi || $4 ne $target)
     {
         print("Failed to create target file $target.\n");
         close($sf);
@@ -280,7 +301,7 @@ sub cmd_put
 
             # Get response line
             my $line = $q->getline();
-            if ($line !~ /^o:([0-9a-f]+):([0-9a-f]+)/oi || hex($1) != $numread)
+            if ($line !~ /^o:([0-9a-f-]+):([0-9a-f-]+)/oi || hex($1) != $numread)
             {
                 print("Failed writing to target file.\n");
                 $res = 3;
@@ -336,7 +357,7 @@ sub cmd_get
     # Open source file
     $cmd = sprintf("o:\"%s\":%x", $source, O_RDONLY);
     @lines = $q->cmd($cmd);
-    if ($#lines < 0 || $lines[0] !~ /^o:([0-9a-f]+):([0-9a-f]+):([0-9a-f]+):\"(.+)\"$/oi || $4 ne $source)
+    if ($#lines < 0 || $lines[0] !~ /^o:([0-9a-f-]+):([0-9a-f-]+):([0-9a-f-]+):\"(.+)\"$/oi || $4 ne $source)
     {
         print("Failed to open source file $source.\n");
         $q->print('q');
@@ -375,7 +396,7 @@ sub cmd_get
 
         # Get response line
         $line = $q->getline();
-        if ($line !~ /^o:([0-9a-f]+):[0-9a-f]+:[0-9a-f]+/oi)
+        if ($line !~ /^o:([0-9a-f-]+):[0-9a-f-]+:[0-9a-f-]+/oi)
         {
             print("Failed reading from source file.\n");
             $res = 3;
@@ -449,98 +470,54 @@ sub cmd_rm
     $_ = switch_to_file_service();
     return $_ if ($_ != 0);
 
-    # Open source file
-    $cmd = sprintf("o:\"%s\":%x", $source, O_RDONLY);
-    @lines = $q->cmd($cmd);
-    if ($#lines < 0 || $lines[0] !~ /^o:([0-9a-f]+):([0-9a-f]+):([0-9a-f]+):\"(.+)\"$/oi || $4 ne $source)
-    {
-        print("Failed to open source file $source.\n");
-        $q->print('q');
-        return 3;
-    }
-
-    # Get source file descriptor and size
-    my $sf = hex($1);
-    my $total_size = hex($3);
-
-    # Check if target exists and is a directory
-    $target .= '/' . get_basename($source) if (-d $target);
-
-    # Open target file
-    my $tf;
-    if (!open($tf, '>', $target))
-    {
-        print("Failed to create target file $target. $!\n");
-        $q->print('q');
-        return 1;
-    }
-    binmode($tf);
-
-    $q->binmode(1);
-    $q->telnetmode(0);
-
-    my $offs = 0;
-    my $numread = 1;        # last statement cannot be used with do-while blocks
-    my $buf;
-    my $line;
-    while (!$q->eof() && $numread > 0)
-    {
-        # Send read command without waiting for prompt
-        $cmd = sprintf('r:%x:%x:%x', $sf, $offs, $get_buf_size);
-        $q->print($cmd);
-
-        # Get response line
-        $line = $q->getline();
-        if ($line !~ /^o:([0-9a-f]+):[0-9a-f]+:[0-9a-f]+/oi)
-        {
-            print("Failed reading from source file.\n");
-            $res = 3;
-            last;
-        }
-        $numread = hex($1);
-
-        # Retrieve buffer contents and wait for prompt
-        $buf = '';
-        while (!$q->eof() && (length($buf) < $numread || $buf !~ /<qconn-file>\s*$/so))
-        {
-            $buf .= $q->get();
-        }
-
-        $buf = substr($buf, 0, $numread);
-
-        # Write to target
-        if ($numread > 0)
-        {
-            if (!print($tf $buf))
-            {
-                print("Failed writing to target file.\n");
-                $res = 3;
-                last;
-            }
-            $offs += $numread;
-        }
-    }
-
-    # Check numbe of bytes written
-    if ($offs != $total_size)
-    {
-        print("Copying failed.\n");
-        $res = 3;
-    }
-
-    # Close target file
-    $cmd = sprintf('c:%x', $sf);
+    # Delete target
+    $cmd = sprintf("d:\"%s\":1", $target);
     @lines = $q->cmd($cmd);
     if ($#lines < 0 || $lines[0] !~ /^o\s*$/o)
     {
-        print("Failed to properly close source file.\n");
+        print("Operation failed.\n");
         $res = 3;
     }
 
     # Send quit command to file service
     $q->print('q');
 
-    close($tf);
+    return $res;
+}
+
+
+sub cmd_mkdir
+{
+    my $cmd;
+    my @lines;
+    my $res = 0;
+
+    if ($#ARGV < 0)
+    {
+        print("Target not specified.\n");
+        $q->print('Quit');
+        return 1;
+    }
+
+    my $target = shift(@ARGV);
+
+    # Switch to file service
+    $_ = switch_to_file_service();
+    return $_ if ($_ != 0);
+
+    # Create target directory
+    $cmd = sprintf("o:\"%s\":%x:%x", $target, O_CREAT|O_WRONLY, S_IFDIR|S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH);
+    @lines = $q->cmd($cmd);
+    print @lines;
+    if ($#lines < 0 || $lines[0] !~ /^o:([0-9a-f-]+):([0-9a-f-]+):([0-9a-f-]+):\"(.+)\"$/oi || $4 ne $target)
+    {
+        print("Failed to create target directory $target.\n");
+        $q->print('Quit');
+        return 3;
+    }
+
+    # Send quit command to file service
+    $q->print('q');
 
     return $res;
 }
@@ -637,6 +614,10 @@ elsif ('get' eq $command)
 elsif ('rm' eq $command)
 {
     $res = cmd_rm();
+}
+elsif ('mkdir' eq $command)
+{
+    $res = cmd_mkdir();
 }
 else
 {
