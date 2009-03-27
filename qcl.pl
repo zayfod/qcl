@@ -29,8 +29,8 @@
 #
 # TODO:
 #   - Parse error messages of file service.
-#   - Ability to set permissions of files when using the put command.
-#   - Allow multiple sources of put command and get commands.
+#   - Allow multiple sources of put and get commands.
+#   - Recursive deletion of directories.
 #
 
 use warnings;
@@ -51,6 +51,7 @@ my $opt_help = 0;
 my $opt_man = 0;
 my $opt_host = 'localhost';
 my $opt_port = 8000;
+my $opt_mode = S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH;
 
 my $command = 'info';
 my $get_buf_size = 2*1024;      # There are problems when reading files with buffer size bigger than 2kB
@@ -62,6 +63,13 @@ sub get_basename
 {
     $_[0] =~ /([^\/\\]+)$/o;
     return $1;
+}
+
+
+sub str_to_int
+{
+    return oct($_[0]) if ($_[0] =~ /^0/);
+    return int($_[0]);
 }
 
 
@@ -85,7 +93,7 @@ sub cmd_info
         print("$_\n") if ('' ne $_);
     }
 
-    $q->print('Quit');
+    $q->print('quit');
     return 0;
 }
 
@@ -100,7 +108,7 @@ sub cmd_versions
         print("$_\n") if ('' ne $_);
     }
 
-    $q->print('Quit');
+    $q->print('quit');
     return 0;
 }
 
@@ -112,7 +120,7 @@ sub cmd_exec
     if ($#ARGV < 0)
     {
         print("Command not specified.\n");
-        $q->print('Quit');
+        $q->print('quit');
         return 1;
     }
 
@@ -121,7 +129,7 @@ sub cmd_exec
     if ($_ < 257)
     {
         print("Unsupported launcer service version.\n");
-        $q->print('Quit');
+        $q->print('quit');
         return 3;
     }
 
@@ -136,7 +144,7 @@ sub cmd_exec
     if ($#lines < 0 || $lines[0] !~ /^OK$/o)
     {
         print("Failed to switch to launcher service.\n");
-        $q->print('Quit');
+        $q->print('quit');
         return 3;
     }
 
@@ -208,7 +216,7 @@ sub switch_to_file_service
     if ($_ < 257)
     {
         print("Unsupported file service version $_.\n");
-        $q->print('Quit');
+        $q->print('quit');
         return 3;
     }
 
@@ -218,7 +226,7 @@ sub switch_to_file_service
     if ($#lines < 0 || $lines[0] !~ /^OK$/o)
     {
         print("Failed to switch to file service.\n");
-        $q->print('Quit');
+        $q->print('quit');
         return 3;
     }
 
@@ -235,7 +243,7 @@ sub cmd_put
     if ($#ARGV < 1)
     {
         print("Source and target not specified.\n");
-        $q->print('Quit');
+        $q->print('quit');
         return 1;
     }
 
@@ -255,19 +263,19 @@ sub cmd_put
     if (!open($sf, '<', $source))
     {
         print("Failed to open source file $source. $!\n");
-        $q->print('Quit');
+        $q->print('quit');
         return 1;
     }
     binmode($sf);
 
     # Create target file
-    $cmd = sprintf("o:\"%s\":%x:%x", $target, O_CREAT|O_TRUNC|O_WRONLY, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH);
+    $cmd = sprintf("o:\"%s\":%x:%x", $target, O_CREAT|O_TRUNC|O_WRONLY, $opt_mode);
     @lines = $q->cmd($cmd);
     if ($#lines < 0 || $lines[0] !~ /^o:([0-9a-f-]+):([0-9a-f-]+):([0-9a-f-]+):\"(.+)\"$/oi || $4 ne $target)
     {
         print("Failed to create target file $target.\n");
         close($sf);
-        $q->print('Quit');
+        $q->print('quit');
         return 3;
     }
 
@@ -343,7 +351,7 @@ sub cmd_get
     if ($#ARGV < 1)
     {
         print("Source and target not specified.\n");
-        $q->print('Quit');
+        $q->print('quit');
         return 1;
     }
 
@@ -460,7 +468,7 @@ sub cmd_rm
     if ($#ARGV < 0)
     {
         print("Target not specified.\n");
-        $q->print('Quit');
+        $q->print('quit');
         return 1;
     }
 
@@ -475,7 +483,7 @@ sub cmd_rm
     @lines = $q->cmd($cmd);
     if ($#lines < 0 || $lines[0] !~ /^o\s*$/o)
     {
-        print("Operation failed.\n");
+        print("No such file or directory or operation failed.\n");
         $res = 3;
     }
 
@@ -495,7 +503,7 @@ sub cmd_mkdir
     if ($#ARGV < 0)
     {
         print("Target not specified.\n");
-        $q->print('Quit');
+        $q->print('quit');
         return 1;
     }
 
@@ -512,12 +520,129 @@ sub cmd_mkdir
     if ($#lines < 0 || $lines[0] !~ /^o:([0-9a-f-]+):([0-9a-f-]+):([0-9a-f-]+):\"(.+)\"$/oi || $4 ne $target)
     {
         print("Failed to create target directory $target.\n");
-        $q->print('Quit');
+        $q->print('quit');
         return 3;
     }
 
     # Send quit command to file service
     $q->print('q');
+
+    return $res;
+}
+
+
+sub cmd_chmod
+{
+    my $cmd;
+    my @lines;
+    my $res = 0;
+    my $open_mode = O_RDWR;
+
+    if ($#ARGV < 0)
+    {
+        print("Target not specified.\n");
+        $q->print('quit');
+        return 1;
+    }
+
+    my $target = shift(@ARGV);
+
+    # Switch to file service
+    $_ = switch_to_file_service();
+    return $_ if ($_ != 0);
+
+    # Check whether the target is a directory
+    my $mode = get_mode($target);
+    $open_mode = S_IFDIR if (Fcntl::S_ISDIR($mode));
+
+    # Open target
+    $cmd = sprintf("o:\"%s\":%x", $target, $open_mode);
+    @lines = $q->cmd($cmd);
+    if ($#lines < 0 || $lines[0] !~ /^o:([0-9a-f-]+):([0-9a-f-]+):([0-9a-f-]+):\"(.+)\"$/oi || $4 ne $target)
+    {
+        print("Failed to open target $target.\n");
+        $q->print('q');
+        return 3;
+    }
+
+    # Get source file descriptor and size
+    my $tf = hex($1);
+
+    # Set permissons
+    $cmd = sprintf("a:%x:%x", $tf, $opt_mode);
+    @lines = $q->cmd($cmd);
+    if ($#lines < 0 || $lines[0] !~ /^o\s*$/o)
+    {
+        print("Failed to properly close target.\n");
+        $res = 3;
+    }
+
+    # Close target file
+    $cmd = sprintf('c:%x', $tf);
+    @lines = $q->cmd($cmd);
+    if ($#lines < 0 || $lines[0] !~ /^o\s*$/o)
+    {
+        print("Failed to properly close target.\n");
+        $res = 3;
+    }
+
+    # Send quit command to file service
+    $q->print('q');
+
+    return $res;
+}
+
+
+sub cmd_kill
+{
+    my $cmd;
+    my @lines;
+    my $res = 0;
+    my $open_mode = O_RDWR;
+
+    if ($#ARGV < 1)
+    {
+        print("Target and signal not specified.\n");
+        $q->print('quit');
+        return 1;
+    }
+
+    my $pid = str_to_int(shift(@ARGV));
+    my $signal = str_to_int(shift(@ARGV));
+
+    # Check cntl service version
+    $_ = get_service_version('cntl');
+    if ($_ < 256)
+    {
+        print("Unsupported cntl service version $_.\n");
+        $q->print('quit');
+        return 3;
+    }
+
+    # Switch to cntl service
+    $q->prompt('/<qconn-cntl>\s*$/o');
+    @lines = $q->cmd('service cntl');
+    if ($#lines < 0 || $lines[0] !~ /^OK$/o)
+    {
+        print("Failed to switch to cntl service.\n");
+        $q->print('quit');
+        return 3;
+    }
+
+    # Send kill command
+    $cmd = sprintf("kill %d %d", $pid, $signal);
+    print "$cmd\n";
+    @lines = $q->cmd($cmd);
+    print @lines;
+    if ($#lines < 0 || $lines[0] !~ /^ok\s*$/o)
+    {
+        print("No such process or operation failed.\n");
+        $q->print('quit');
+        return 3;
+    }
+
+    # Send quit command to file service
+    $q->print('quit');
 
     return $res;
 }
@@ -531,7 +656,8 @@ GetOptions
     'help|?' => \$opt_help,
     'man' => \$opt_man,
     'host=s' => \$opt_host,
-    'port=i' => \$opt_host
+    'port=i' => \$opt_host,
+    'mode=s' => sub { $opt_mode = str_to_int($_[1]) & 0xFFF; }
 ) or pod2usage(2);
 
 pod2usage(1) if $opt_help;
@@ -618,6 +744,14 @@ elsif ('rm' eq $command)
 elsif ('mkdir' eq $command)
 {
     $res = cmd_mkdir();
+}
+elsif ('chmod' eq $command)
+{
+    $res = cmd_chmod();
+}
+elsif ('kill' eq $command)
+{
+    $res = cmd_kill();
 }
 else
 {
