@@ -129,9 +129,9 @@ sub cmd_exec
 
     # Check launcher service version
     $_ = get_service_version('launcher');
-    if ($_ < 257)
+    if ($_ < 256)
     {
-        print("Unsupported launcer service version.\n");
+        print("Unsupported launcher service version.\n");
         $q->print('quit');
         return 3;
     }
@@ -216,7 +216,7 @@ sub switch_to_file_service
 {
     # Check file service version
     $_ = get_service_version('file');
-    if ($_ < 257)
+    if ($_ < 256)
     {
         print("Unsupported file service version $_.\n");
         $q->print('quit');
@@ -409,7 +409,7 @@ sub cmd_get
         $line = $q->getline();
         if ($line !~ /^o:([0-9a-f-]+):[0-9a-f-]+:[0-9a-f-]+/oi)
         {
-            print("Failed reading from source file.\n");
+            print("Failed reading from source file. $line\n");
             $res = 3;
             last;
         }
@@ -444,7 +444,7 @@ sub cmd_get
         $res = 3;
     }
 
-    # Close target file
+    # Close source file
     $cmd = sprintf('c:%x', $sf);
     @lines = $q->cmd($cmd);
     if ($#lines < 0 || $lines[0] !~ /^o\s*$/o)
@@ -687,7 +687,7 @@ $q->option_accept
     Dont => Net::Telnet::TELOPT_ECHO,
 );
 
-# FIXME
+# Debug
 #$q->dump_log('io.log');
 #$q->option_log('opt.log');
 
