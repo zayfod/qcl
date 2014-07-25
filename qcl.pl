@@ -7,7 +7,7 @@
 #
 # QNX QCONN service provider client.
 #
-# Copyright (c) 2009 Kaloyan Tenchov
+# Copyright (c) 2009-2014 Kaloyan Tenchov
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -918,11 +918,11 @@ Retrieving system information for a QNX target:
 
 =head1 AUTHOR
 
-Kaloyan Tenchov, L<http://kaloyan.tenchov.name/>
+Kaloyan Tenchov, L<http://github.com/zayfod/qcl>
 
 =head1 COPYRIGHT
 
-Copyright (c) 2009 Kaloyan Tenchov
+Copyright (c) 2009-2014 Kaloyan Tenchov
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
