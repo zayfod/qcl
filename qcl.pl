@@ -659,7 +659,7 @@ GetOptions
     'help|?' => \$opt_help,
     'man' => \$opt_man,
     'host=s' => \$opt_host,
-    'port=i' => \$opt_host,
+    'port=i' => \$opt_port,
     'mode=s' => sub { $opt_mode = str_to_int($_[1]) & 0xFFF; }
 ) or pod2usage(2);
 
